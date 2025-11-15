@@ -2,10 +2,7 @@ import subprocess
 import threading
 import time
 from flask import Flask, request, jsonify
-from crewai import Agent, Task, Crew, Process
-from crewai.llm import MockLLM
-
-# ---------------- NGROK ------------------
+from crewai import Agent, Task, LLM, Crew, Process
 
 def start_ngrok():
     subprocess.Popen(["ngrok", "http", "5000"])
@@ -13,67 +10,82 @@ def start_ngrok():
     try:
         import requests
         tunnels = requests.get("http://localhost:4040/api/tunnels").json()
-        print("\n🔗 NGROK URL:", tunnels['tunnels'][0]['public_url'])
-    except:
-        print("No se pudo obtener la URL pública de ngrok.")
+        print("\nNGROK PUBLIC URL:", tunnels["tunnels"][0]["public_url"], "\n")
+    except Exception:
+        pass
 
 threading.Thread(target=start_ngrok, daemon=True).start()
 
-# ---------------- LLM OFFLINE ------------------
-
-llm_local = MockLLM()   # <--- NO usa OpenAI, NO usa Ollama
-
-# ---------------- CREWAI ------------------
+llm_local = LLM(
+    model="llama3",
+    api_base="http://localhost:11434/v1",
+    api_key="ollama"
+)
 
 emprendedor = Agent(
     role="Emprendedor",
-    goal="Presentar una propuesta.",
-    backstory="Un pitch sencillo.",
+    goal="Presentar una idea convincente.",
+    backstory="Innovador buscando inversión.",
     llm=llm_local
 )
 
-juez = Agent(
-    role="Juez",
-    goal="Evaluar la propuesta.",
-    backstory="Da retroalimentación básica.",
+juez_1 = Agent(
+    role="Juez Conservador",
+    goal="Evaluar riesgos financieros.",
+    backstory="Cauteloso con inversiones.",
+    llm=llm_local
+)
+
+juez_2 = Agent(
+    role="Juez Visionario",
+    goal="Evaluar innovación.",
+    backstory="Busca ideas disruptivas.",
     llm=llm_local
 )
 
 pitch = Task(
-    description="El emprendedor presenta su idea.",
-    expected_output="Un pitch muy simple.",
+    description="El emprendedor presenta la idea: {{idea}}",
+    expected_output="Pitch claro.",
     agent=emprendedor
 )
 
-evaluacion = Task(
-    description="El juez responde al pitch.",
-    expected_output="Retro breve.",
-    agent=juez
+evaluacion_1 = Task(
+    description="El juez conservador analiza la idea.",
+    expected_output="Evaluación del riesgo.",
+    agent=juez_1
+)
+
+evaluacion_2 = Task(
+    description="El juez visionario analiza la innovación.",
+    expected_output="Evaluación creativa.",
+    agent=juez_2
 )
 
 crew = Crew(
-    agents=[emprendedor, juez],
-    tasks=[pitch, evaluacion],
+    agents=[emprendedor, juez_1, juez_2],
+    tasks=[pitch, evaluacion_1, evaluacion_2],
     process=Process.sequential
 )
 
-# ---------------- API ------------------
-
 app = Flask(__name__)
-
-@app.route("/simulacion", methods=["POST"])
-def simulacion():
-    data = request.json
-    idea = data.get("idea", "Sin idea")
-
-    result = crew.kickoff(inputs={"input": idea})
-    return jsonify({"resultado": str(result)})
 
 @app.route("/")
 def home():
-    return "API de CrewAI funcionando."
+    return "Sistema Multiagente funcionando. Usa /simulacion por GET o POST."
 
-# ---------------- RUN ------------------
+@app.route("/simulacion", methods=["GET", "POST"])
+def simulacion():
+    if request.method == "GET":
+        idea = request.args.get("idea", "Sin idea por GET")
+    else:
+        data = request.json
+        idea = data.get("idea", "Sin idea por POST")
+
+    try:
+        resultado = crew.kickoff(inputs={"idea": idea})
+        return jsonify({"idea": idea, "resultado": str(resultado)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(port=5000, debug=False)
